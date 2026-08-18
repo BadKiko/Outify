@@ -102,3 +102,50 @@ pub fn update_client(client_id: String, client_secret: String) {
         info!("spotify client credentials updated");
     }
 }
+
+const SESSION_WEB_SCOPES: &str = "user-read-private,user-read-email,user-top-read,user-library-read,playlist-read-private,playlist-read-collaborative";
+
+impl SpotifyClient {
+    pub(crate) async fn oauth_access_token(&self) -> Option<String> {
+        match self.load_token().await {
+            Ok(Some(token)) => Some(token.access_token),
+            Ok(None) => None,
+            Err(e) => {
+                warn!("oauth account token unavailable: {e}");
+                None
+            }
+        }
+    }
+
+    pub(crate) async fn session_access_token() -> Result<String, SpotifyApiError> {
+        let session = crate::session::with_session(|s| s.clone())?;
+        if session.is_invalid() {
+            return Err(SpotifyApiError::Generic(
+                "playback session is not connected".to_string(),
+            ));
+        }
+        let token = match session.token_provider().get_token(SESSION_WEB_SCOPES).await {
+            Ok(token) => token,
+            Err(e) => {
+                warn!("session token with full scopes failed: {e}");
+                session
+                    .token_provider()
+                    .get_token("user-read-private,user-top-read")
+                    .await?
+            }
+        };
+        Ok(token.access_token)
+    }
+
+    pub(crate) async fn access_tokens(&self) -> Vec<(String, String)> {
+        let mut tokens = Vec::new();
+        if let Some(token) = self.oauth_access_token().await {
+            tokens.push(("oauth".to_string(), token));
+        }
+        match Self::session_access_token().await {
+            Ok(token) => tokens.push(("session".to_string(), token)),
+            Err(e) => warn!("session web token unavailable: {e}"),
+        }
+        tokens
+    }
+}

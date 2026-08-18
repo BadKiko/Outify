@@ -111,7 +111,7 @@ pub extern "system" fn spotify_search(
         Ok(u) => u,
         Err(e) => {
             error!("spotify search api failed: {e}");
-            return std::ptr::null_mut();
+            Vec::new()
         }
     };
 

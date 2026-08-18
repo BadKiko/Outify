@@ -25,12 +25,16 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowLeft
@@ -66,21 +70,27 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import cc.tomko.outify.ALBUM_COVER_URL
 import cc.tomko.outify.MyIcons
 import cc.tomko.outify.core.model.Artist
+import cc.tomko.outify.core.model.CoverSize
 import cc.tomko.outify.core.model.SyncedLyric
 import cc.tomko.outify.core.model.Track
+import cc.tomko.outify.core.model.getCover
 import cc.tomko.outify.data.setting.LocalUiSettings
 import cc.tomko.outify.ui.components.SmartImage
 import cc.tomko.outify.ui.components.WavyMusicSlider
@@ -92,6 +102,7 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 
 private val IMAGE_SIZE = 400.dp
+private val BOTTOM_ACTIONS_SPACE = 108.dp
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -105,53 +116,57 @@ fun PlayerScreen(
     val forwardMilliseconds by viewModel.forwardMilliseconds.collectAsState(15_000)
     val positionMs by viewModel.positionMs.collectAsState()
     val currentTrack by viewModel.currentTrack.collectAsState(initial = null)
+    val previousTrack by viewModel.previousTrack.collectAsState(initial = null)
+    val nextTrack by viewModel.nextTrack.collectAsState(initial = null)
+    val hasPrevious by viewModel.hasPrevious.collectAsState(initial = false)
+    val hasNext by viewModel.hasNext.collectAsState(initial = false)
     val lyrics by viewModel.lyrics.collectAsState()
     val currentLyric by viewModel.currentLyric.collectAsState()
     val isShuffling by viewModel.isShuffling.collectAsState()
     val isRepeating by viewModel.isRepeating.collectAsState()
     val isFavorite by viewModel.isLiked.collectAsState()
     val romanizeLyrics by viewModel.romanizeLyrics.collectAsState()
-    val artworkUrl = uiState.albumArt?.let { ALBUM_COVER_URL + it }
 
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .statusBarsPadding()
     ) {
-        val artworkTopSpacer = ((maxHeight - IMAGE_SIZE) / 3f - 48.dp).coerceAtLeast(16.dp)
+        val imageSize = minOf(
+            IMAGE_SIZE,
+            maxWidth - 48.dp,
+            (maxHeight * 0.38f).coerceAtLeast(180.dp),
+        )
+        val artworkTopSpacer = ((maxHeight - imageSize) / 5f - 24.dp).coerceAtLeast(8.dp)
 
         LazyColumn(
             state = listState,
-            modifier = Modifier
-                .fillMaxSize()
-                .height(maxHeight - 56.dp),
+            modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally,
-            contentPadding = PaddingValues(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 132.dp)
+            contentPadding = PaddingValues(
+                start = 24.dp,
+                end = 24.dp,
+                top = 16.dp,
+                bottom = BOTTOM_ACTIONS_SPACE,
+            )
         ) {
             item { Spacer(Modifier.height(artworkTopSpacer)) }
 
             item {
-                val imageScale by animateFloatAsState(
-                    targetValue = if (uiState.isPlaying) 1f else 0.85f,
-                    animationSpec = motionScheme.defaultSpatialSpec(),
-                    label = "albumArtScale"
-                )
-
-                SmartImage(
-                    url = artworkUrl,
-                    imageSize = IMAGE_SIZE,
-                    monochrome = LocalUiSettings.current.monochromePlayer,
-                    shape = RoundedCornerShape(18.dp),
-                    modifier = Modifier.graphicsLayer {
-                        scaleX = imageScale
-                        scaleY = imageScale
-                    }
+                SwipeableNowPlaying(
+                    currentTrack = currentTrack,
+                    previousTrack = previousTrack,
+                    nextTrack = nextTrack,
+                    hasPrevious = hasPrevious,
+                    hasNext = hasNext,
+                    imageSize = imageSize,
+                    isPlaying = uiState.isPlaying,
+                    onArtistClick = onArtistClick,
+                    onSkipPrevious = { viewModel.onAction(PlayerAction.Previous) },
+                    onSkipNext = { viewModel.onAction(PlayerAction.Next) },
                 )
             }
-
-            item { Spacer(Modifier.height(16.dp)) }
-
-            item { TrackInfo(currentTrack, onArtistClick) }
 
             item { Spacer(Modifier.height(32.dp)) }
 
@@ -246,6 +261,91 @@ fun PlayerScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun SwipeableNowPlaying(
+    currentTrack: Track?,
+    previousTrack: Track?,
+    nextTrack: Track?,
+    hasPrevious: Boolean,
+    hasNext: Boolean,
+    imageSize: Dp,
+    isPlaying: Boolean,
+    onArtistClick: (Artist) -> Unit,
+    onSkipPrevious: () -> Unit,
+    onSkipNext: () -> Unit,
+) {
+    val pagerState = rememberPagerState(initialPage = 1) { 3 }
+    val hasPreviousLatest = rememberUpdatedState(hasPrevious)
+    val hasNextLatest = rememberUpdatedState(hasNext)
+    val imageScale by animateFloatAsState(
+        targetValue = if (isPlaying) 1f else 0.85f,
+        animationSpec = motionScheme.defaultSpatialSpec(),
+        label = "albumArtScale"
+    )
+
+    LaunchedEffect(currentTrack?.uri) {
+        if (pagerState.currentPage != 1 || pagerState.targetPage != 1) {
+            pagerState.scrollToPage(1)
+        }
+    }
+
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.settledPage }
+            .collect { page ->
+                when (page) {
+                    0 -> if (hasPreviousLatest.value) {
+                        onSkipPrevious()
+                    } else {
+                        pagerState.animateScrollToPage(1)
+                    }
+                    2 -> if (hasNextLatest.value) {
+                        onSkipNext()
+                    } else {
+                        pagerState.animateScrollToPage(1)
+                    }
+                }
+            }
+    }
+
+    HorizontalPager(
+        state = pagerState,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(imageSize + 136.dp)
+            .clipToBounds(),
+        beyondViewportPageCount = 1,
+        userScrollEnabled = hasPrevious || hasNext,
+    ) { page ->
+        val track = when (page) {
+            0 -> previousTrack
+            2 -> nextTrack
+            else -> currentTrack
+        }
+        val artworkUrl = track?.album?.getCover(CoverSize.LARGE)?.uri
+            ?.let { ALBUM_COVER_URL + it }
+        val scale = if (page == 1) imageScale else 1f
+
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            SmartImage(
+                url = artworkUrl,
+                imageSize = imageSize,
+                monochrome = LocalUiSettings.current.monochromePlayer,
+                shape = RoundedCornerShape(18.dp),
+                modifier = Modifier.graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                }
+            )
+            Spacer(Modifier.height(16.dp))
+            TrackInfo(track, onArtistClick)
+        }
+    }
+}
+
 @Composable
 private fun TrackInfo(track: Track?, onArtistClick: (Artist) -> Unit) {
     Column(
@@ -321,7 +421,8 @@ private fun BottomActionsBar(
                     )
                 )
             )
-            .padding(start = 32.dp, end = 32.dp, top = 16.dp, bottom = 8.dp),
+            .navigationBarsPadding()
+            .padding(start = 32.dp, end = 32.dp, top = 16.dp, bottom = 20.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {

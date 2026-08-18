@@ -13,6 +13,7 @@ import cc.tomko.outify.data.dao.LikedDao
 import cc.tomko.outify.data.repository.InterfaceSettings
 import cc.tomko.outify.data.repository.LikedRepository
 import cc.tomko.outify.data.repository.PlaybackSettings
+import cc.tomko.outify.data.metadata.TrackMetadataHelper
 import cc.tomko.outify.data.repository.PlayerRepository
 import cc.tomko.outify.data.repository.SettingsRepository
 import cc.tomko.outify.playback.PlaybackStateHolder
@@ -21,6 +22,7 @@ import cc.tomko.outify.ui.model.player.PlayerAction
 import cc.tomko.outify.ui.model.player.PlayerUIState
 import coil3.ImageLoader
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -36,6 +38,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
 import javax.inject.Inject
 import kotlin.time.Duration
 import kotlin.time.DurationUnit
@@ -51,6 +55,8 @@ class PlayerViewModel @Inject constructor(
     private val likedDao: LikedDao,
     private val likedRepository: LikedRepository,
     private val spClient: SpClient,
+    private val trackMetadataHelper: TrackMetadataHelper,
+    private val json: Json,
 ) : ViewModel() {
     private val _state = MutableStateFlow(PlaybackState())
     val state: StateFlow<PlaybackState> = _state.asStateFlow()
@@ -61,6 +67,18 @@ class PlayerViewModel @Inject constructor(
     private val _positionMs =
         MutableStateFlow(playbackStateHolder.estimatePosition().inWholeMilliseconds)
     val positionMs = _positionMs.asStateFlow()
+
+    private val _previousTrack = MutableStateFlow<Track?>(null)
+    val previousTrack: StateFlow<Track?> = _previousTrack.asStateFlow()
+
+    private val _nextTrack = MutableStateFlow<Track?>(null)
+    val nextTrack: StateFlow<Track?> = _nextTrack.asStateFlow()
+
+    private val _hasPrevious = MutableStateFlow(false)
+    val hasPrevious: StateFlow<Boolean> = _hasPrevious.asStateFlow()
+
+    private val _hasNext = MutableStateFlow(false)
+    val hasNext: StateFlow<Boolean> = _hasNext.asStateFlow()
 
     val isShuffling = settingsRepository.shuffleEnabled
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
@@ -104,6 +122,39 @@ class PlayerViewModel @Inject constructor(
             playbackStateHolder.state.collect { playback ->
                 _state.value = playback
             }
+        }
+
+        viewModelScope.launch {
+            playbackStateHolder.state
+                .map { it.currentTrack?.uri }
+                .distinctUntilChanged()
+                .collect { loadNeighbors() }
+        }
+    }
+
+    private suspend fun loadNeighbors() {
+        val (previous, next, hasNeighbors) = withContext(Dispatchers.IO) {
+            val prevUri = decodeUris(spirc.previousTracks()).lastOrNull()
+            val nextUri = decodeUris(spirc.nextTracks()).firstOrNull()
+            val previousTrack = prevUri?.let { uri ->
+                trackMetadataHelper.getTrackMetadata(listOf(uri)).firstOrNull()
+            }
+            val nextTrack = nextUri?.let { uri ->
+                trackMetadataHelper.getTrackMetadata(listOf(uri)).firstOrNull()
+            }
+            Triple(previousTrack, nextTrack, (prevUri != null) to (nextUri != null))
+        }
+        _previousTrack.value = previous
+        _nextTrack.value = next
+        _hasPrevious.value = hasNeighbors.first
+        _hasNext.value = hasNeighbors.second
+    }
+
+    private fun decodeUris(raw: String): List<String> {
+        return try {
+            json.decodeFromString<List<String>>(raw)
+        } catch (_: Exception) {
+            emptyList()
         }
     }
 

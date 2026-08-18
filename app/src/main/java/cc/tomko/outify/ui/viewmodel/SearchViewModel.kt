@@ -5,6 +5,9 @@ import androidx.annotation.StringRes
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cc.tomko.outify.R
+import cc.tomko.outify.core.AuthManager
+import cc.tomko.outify.core.AuthStateEvent
+import cc.tomko.outify.core.AuthStateEventBus
 import cc.tomko.outify.core.SpClient
 import cc.tomko.outify.core.Spirc.SpircWrapper
 import cc.tomko.outify.core.model.Album
@@ -42,6 +45,7 @@ class SearchViewModel @Inject constructor(
     val metadata: Metadata,
     val spirc: SpircWrapper,
     val spClient: SpClient,
+    private val authManager: AuthManager,
     private val repository: SearchRepository,
     private val playbackStateHolder: PlaybackStateHolder,
     private val settingsRepository: SettingsRepository,
@@ -90,7 +94,17 @@ class SearchViewModel @Inject constructor(
     val historyResults: StateFlow<List<SearchUiModel>> = _historyResults
 
     init {
-        _isLoggedIn.value = spClient.isOAuthAuthenticated()
+        refreshLoginState()
+        viewModelScope.launch {
+            AuthStateEventBus.events.collect {
+                when (it) {
+                    is AuthStateEvent.AccountLoggedIn,
+                    is AuthStateEvent.PlaybackLoggedIn,
+                    is AuthStateEvent.AccountLoggedOut,
+                    is AuthStateEvent.PlaybackLoggedOut -> refreshLoginState()
+                }
+            }
+        }
 
         viewModelScope.launch {
             queryFlow
@@ -256,6 +270,14 @@ class SearchViewModel @Inject constructor(
 
     fun onQueryChange(query: String) {
         queryFlow.value = query
+    }
+
+    private fun refreshLoginState() {
+        viewModelScope.launch {
+            _isLoggedIn.value = withContext(Dispatchers.IO) {
+                spClient.isOAuthAuthenticated() || authManager.hasCachedCredentials()
+            }
+        }
     }
 
     fun fetchRecommendations(seedIds: List<String>, config: RecommendationConfig) {

@@ -4,9 +4,11 @@ import android.util.Log
 import androidx.room.withTransaction
 import cc.tomko.outify.data.dao.AlbumDao
 import cc.tomko.outify.data.dao.LikedDao
+import cc.tomko.outify.core.model.Track
 import cc.tomko.outify.data.database.AppDatabase
 import cc.tomko.outify.data.database.TrackWithArtists
 import cc.tomko.outify.data.database.album.AlbumWithArtists
+import cc.tomko.outify.data.database.toDomain
 import cc.tomko.outify.data.database.track.LikedTrackEntity
 import cc.tomko.outify.data.metadata.Metadata
 import cc.tomko.outify.data.metadata.TrackMetadataHelper
@@ -207,6 +209,24 @@ class LikedRepository @Inject constructor(
         val albumIds = tracks.mapNotNull { it.track.albumId }.distinct()
         if (albumIds.isEmpty()) return emptyMap()
         return albumDao.getAlbumsWithArtists(albumIds).associateBy { it.album.albumId }
+    }
+
+    suspend fun getHomePreviewTracks(limit: Int = 20): List<Track> = withContext(Dispatchers.IO) {
+        val ids = likedDao.getIdsWindow(limit = limit, offset = 0)
+        if (ids.isEmpty()) return@withContext emptyList()
+
+        val cached = likedDao.getTracksWithArtists(ids)
+        if (cached.isNotEmpty()) {
+            val albums = getAlbumsForTracks(cached)
+            val tracks = cached.map { twa ->
+                twa.toDomain(twa.track.albumId?.let { albums[it] })
+            }
+            if (tracks.any { it.album?.covers?.isNotEmpty() == true }) {
+                return@withContext tracks
+            }
+        }
+
+        trackMetadataHelper.getTrackMetadata(ids.map { "spotify:track:$it" })
     }
 
     /**

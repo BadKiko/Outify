@@ -11,8 +11,10 @@ import cc.tomko.outify.core.UserProfile
 import cc.tomko.outify.core.model.Profile
 import cc.tomko.outify.core.model.Track
 import cc.tomko.outify.core.model.toOutifyUri
+import cc.tomko.outify.ALBUM_COVER_URL
 import cc.tomko.outify.data.metadata.NativeErrorHandler
 import cc.tomko.outify.data.metadata.TrackMetadataHelper
+import cc.tomko.outify.data.repository.LikedRepository
 import cc.tomko.outify.data.repository.SettingsRepository
 import cc.tomko.outify.playback.PlaybackStateHolder
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -81,6 +83,7 @@ class HomeViewModel @Inject constructor(
     private val playbackStateHolder: PlaybackStateHolder,
     private val userProfile: UserProfile,
     private val settingsRepository: SettingsRepository,
+    private val likedRepository: LikedRepository,
     private val authManager: AuthManager,
 ) : ViewModel() {
 
@@ -113,8 +116,7 @@ class HomeViewModel @Inject constructor(
                     }
 
                     is AuthStateEvent.AccountLoggedOut -> {
-                        _uiState.value = HomeUiState.NotAuthenticated
-                        loadUserProfile()
+                        loadData()
                     }
 
                     is AuthStateEvent.PlaybackLoggedIn -> {
@@ -173,8 +175,9 @@ class HomeViewModel @Inject constructor(
             delay(150)
 
             try {
-                val isAuthenticated = withContext(Dispatchers.IO) { spClient.isOAuthAuthenticated() }
-                if (!isAuthenticated) {
+                val hasPlayback = withContext(Dispatchers.IO) { authManager.hasCachedCredentials() }
+                val hasOauth = withContext(Dispatchers.IO) { spClient.isOAuthAuthenticated() }
+                if (!hasPlayback && !hasOauth) {
                     _uiState.value = HomeUiState.NotAuthenticated
                     loadUserProfile()
                     return@launch
@@ -209,30 +212,22 @@ class HomeViewModel @Inject constructor(
 
                     val topArtistsJson = withContext(Dispatchers.IO) { spClient.getUserTop("artists", durationValue) }
                     if (topArtistsJson == null) {
-                        _uiState.value = HomeUiState.NotAuthenticated
-                        loadUserProfile()
-                        return@launch
+                        continue
                     }
                     val topArtistsError =
                         NativeErrorHandler.handleErrorJson(topArtistsJson, "top artists")
                     if (topArtistsError != null) {
-                        _uiState.value = HomeUiState.NotAuthenticated
-                        loadUserProfile()
-                        return@launch
+                        continue
                     }
 
                     val topTracksJson = withContext(Dispatchers.IO) { spClient.getUserTop("tracks", durationValue) }
                     if (topTracksJson == null) {
-                        _uiState.value = HomeUiState.NotAuthenticated
-                        loadUserProfile()
-                        return@launch
+                        continue
                     }
                     val topTracksError =
                         NativeErrorHandler.handleErrorJson(topTracksJson, "top tracks")
                     if (topTracksError != null) {
-                        _uiState.value = HomeUiState.NotAuthenticated
-                        loadUserProfile()
-                        return@launch
+                        continue
                     }
 
                     val topArtists = parseTopArtists(topArtistsJson)
@@ -247,12 +242,46 @@ class HomeViewModel @Inject constructor(
                     }
                 }
 
+                if (loadFromLibraryFallback()) {
+                    loadUserProfile()
+                    return@launch
+                }
+
                 _uiState.value = HomeUiState.EmptyResult
                 loadUserProfile()
             } catch (e: Exception) {
                 _uiState.value = HomeUiState.Error(e.message ?: "Unknown error")
             }
         }
+    }
+
+    private suspend fun loadFromLibraryFallback(): Boolean {
+        val tracks = withContext(Dispatchers.IO) { likedRepository.getHomePreviewTracks(20) }
+        if (tracks.isEmpty()) return false
+
+        val artists = LinkedHashMap<String, TopArtist>()
+        for (track in tracks) {
+            for (artist in track.artists) {
+                if (artist.uri.isBlank() || artists.containsKey(artist.uri)) continue
+                val imageId = artist.covers.firstOrNull()?.uri
+                    ?: artist.portraits.firstOrNull()
+                    ?: track.album?.covers?.firstOrNull()?.uri
+                val imageUrl = imageId?.let { id ->
+                    if (id.startsWith("http")) id else ALBUM_COVER_URL + id
+                }
+                artists[artist.uri] = TopArtist(
+                    uri = artist.uri,
+                    name = artist.name,
+                    imageUrl = imageUrl,
+                    rank = artists.size + 1,
+                )
+                if (artists.size >= 10) break
+            }
+            if (artists.size >= 10) break
+        }
+
+        _uiState.value = HomeUiState.Success(artists.values.toList(), tracks)
+        return true
     }
 
     private suspend fun updateTopCache(

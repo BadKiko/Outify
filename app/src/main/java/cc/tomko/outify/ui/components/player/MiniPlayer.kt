@@ -9,7 +9,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cast
@@ -42,21 +44,25 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.toShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import cc.tomko.outify.ALBUM_COVER_URL
 import cc.tomko.outify.core.model.CoverSize
+import cc.tomko.outify.core.model.Track
 import cc.tomko.outify.core.model.getCover
 import cc.tomko.outify.data.setting.LocalUiSettings
 import cc.tomko.outify.ui.components.SmartImage
@@ -67,6 +73,7 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 private val TAB_HEIGHT = 20.dp
+private val IMAGE_SIZE = 40.dp
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -78,72 +85,71 @@ fun SharedTransitionScope.MiniPlayer(
     onExpand: (() -> Unit)? = null,
     onClick: (() -> Unit)? = null,
 ) {
-    val context = LocalContext.current
     val currentTrack by viewModel.currentTrack.collectAsState(initial = null)
+    val previousTrack by viewModel.previousTrack.collectAsState(initial = null)
+    val nextTrack by viewModel.nextTrack.collectAsState(initial = null)
+    val hasPrevious by viewModel.hasPrevious.collectAsState(initial = false)
+    val hasNext by viewModel.hasNext.collectAsState(initial = false)
     val isPlaying by viewModel.isPlaying.collectAsState(initial = false)
     val isBuffering by viewModel.isBuffering().collectAsState(initial = false)
     val isActiveDevice by viewModel.isActiveDevice().collectAsState(initial = true)
     val currentTime by viewModel.positionMs.collectAsState(initial = 0L)
     val spirc = viewModel.spirc
-
-    val totalTime = currentTrack?.duration ?: 0L
-
-    val imageSize = 40.dp
-    val artworkUrl =
-        currentTrack?.album?.getCover(CoverSize.SMALL)?.uri.let { ALBUM_COVER_URL + it }
+    val hasPreviousLatest = rememberUpdatedState(hasPrevious)
+    val hasNextLatest = rememberUpdatedState(hasNext)
 
     val offsetY = remember { Animatable(0f) }
     val coroutineScope = rememberCoroutineScope()
+    val pagerState = rememberPagerState(initialPage = 1) { 3 }
+
+    LaunchedEffect(currentTrack?.uri) {
+        if (pagerState.currentPage != 1 || pagerState.targetPage != 1) {
+            pagerState.scrollToPage(1)
+        }
+    }
+
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.settledPage }
+            .collect { page ->
+                when (page) {
+                    0 -> if (hasPreviousLatest.value) {
+                        viewModel.skipPrevious()
+                    } else {
+                        pagerState.animateScrollToPage(1)
+                    }
+                    2 -> if (hasNextLatest.value) {
+                        viewModel.skipNext()
+                    } else {
+                        pagerState.animateScrollToPage(1)
+                    }
+                }
+            }
+    }
 
     Box(
         modifier = modifier
             .fillMaxWidth()
             .pointerInput(Unit) {
-                var totalDragX = 0f
-                var totalDragY = 0f
-
-                detectDragGestures(
-                    onDrag = { change, dragAmount ->
-                        totalDragX += dragAmount.x
-                        totalDragY += dragAmount.y
-
+                detectVerticalDragGestures(
+                    onVerticalDrag = { change, dragAmount ->
+                        change.consume()
                         coroutineScope.launch {
-                            val target = max(0f, offsetY.value + dragAmount.y)
-                            offsetY.snapTo(target)
+                            offsetY.snapTo(max(0f, offsetY.value + dragAmount))
                         }
                     },
                     onDragEnd = {
-                        val horizontalThreshold = 100.dp.toPx()
                         val verticalThreshold = 40.dp.toPx()
-
-                        when {
-                            totalDragX > horizontalThreshold -> spirc.playerPrevious()
-                            totalDragX < -horizontalThreshold -> spirc.playerNext()
-                        }
-
-                        if (totalDragY > verticalThreshold) {
+                        if (offsetY.value > verticalThreshold) {
                             onDismiss()
                         }
-
                         coroutineScope.launch {
-                            offsetY.animateTo(
-                                targetValue = 0f,
-                                animationSpec = tween(durationMillis = 300)
-                            )
+                            offsetY.animateTo(0f, tween(durationMillis = 300))
                         }
-
-                        totalDragX = 0f
-                        totalDragY = 0f
                     },
                     onDragCancel = {
                         coroutineScope.launch {
-                            offsetY.animateTo(
-                                targetValue = 0f,
-                                animationSpec = tween(durationMillis = 300)
-                            )
+                            offsetY.animateTo(0f, tween(300))
                         }
-                        totalDragX = 0f
-                        totalDragY = 0f
                     }
                 )
             }
@@ -182,12 +188,10 @@ fun SharedTransitionScope.MiniPlayer(
             }
         }
 
-        // Main card
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(64.dp)
-                .clickable { onClick?.invoke() },
+                .height(64.dp),
             shape = RoundedCornerShape(16.dp),
             tonalElevation = 0.dp,
             shadowElevation = 16.dp,
@@ -197,89 +201,38 @@ fun SharedTransitionScope.MiniPlayer(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 4.dp, end = 8.dp)
+                    .padding(end = 8.dp)
             ) {
-                // Album artwork
-                Box(
+                HorizontalPager(
+                    state = pagerState,
                     modifier = Modifier
-                        .size(64.dp)
-                        .padding(start = 6.dp, top = 12.dp, bottom = 12.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        shape = RoundedCornerShape(6.dp),
-                        modifier = Modifier
-                            .size(imageSize)
-                            .sharedElementWithCallerManagedVisibility(
-                                sharedContentState = rememberSharedContentState(SharedElementKey.PLAYER_ARTWORK),
-                                visible = true,
-                            )
-                    ) {
-                        SmartImage(
-                            url = artworkUrl,
-                            contentDescription = "Artwork",
-                            modifier = Modifier
-                                .fillMaxSize(),
-                            monochrome = LocalUiSettings.current.monochromePlayer
-                        )
+                        .weight(1f)
+                        .clipToBounds()
+                        .clickable { onClick?.invoke() },
+                    beyondViewportPageCount = 1,
+                    userScrollEnabled = hasPrevious || hasNext,
+                ) { page ->
+                    val track = when (page) {
+                        0 -> previousTrack
+                        2 -> nextTrack
+                        else -> currentTrack
                     }
-
-                    if (isBuffering) {
-                        ContainedLoadingIndicator(
-                            modifier = Modifier
-                                .size(imageSize)
-                                .alpha(0.5f)
-                                .align(Alignment.Center),
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                Column(
-                    verticalArrangement = Arrangement.Center,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text(
-                        text = currentTrack?.name ?: "-----",
-                        style = MaterialTheme.typography.bodyLargeEmphasized,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-
-                    Spacer(modifier = Modifier.height(2.dp))
-
-                    Text(
-                        text = buildString {
-                            append(currentTrack?.artists?.joinToString { it.name } ?: "----")
-                            append(" · ")
-                            append(formatTime(currentTime))
-                            append(" / ")
-                            append(formatTime(totalTime))
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    MiniPlayerTrackContent(
+                        track = track,
+                        currentTimeMs = if (page == 1) currentTime else 0L,
+                        isBuffering = page == 1 && isBuffering,
+                        showSharedArtwork = page == 1,
                     )
                 }
 
-                Spacer(modifier = Modifier.width(8.dp))
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     val icon = if (isActiveDevice) Icons.Default.PhoneIphone else Icons.Default.Cast
 
                     Icon(
                         icon,
                         contentDescription = null,
                         modifier = Modifier
-                            .clickable {
-                                viewModel.openDevices()
-                            }
+                            .clickable { viewModel.openDevices() }
                             .padding(6.dp)
                             .size(20.dp),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -321,6 +274,96 @@ fun SharedTransitionScope.MiniPlayer(
                     }
                 }
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun SharedTransitionScope.MiniPlayerTrackContent(
+    track: Track?,
+    currentTimeMs: Long,
+    isBuffering: Boolean,
+    showSharedArtwork: Boolean,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 4.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(64.dp)
+                .padding(start = 6.dp, top = 12.dp, bottom = 12.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(6.dp),
+                modifier = Modifier
+                    .size(IMAGE_SIZE)
+                    .then(
+                        if (showSharedArtwork) {
+                            Modifier.sharedElementWithCallerManagedVisibility(
+                                sharedContentState = rememberSharedContentState(SharedElementKey.PLAYER_ARTWORK),
+                                visible = true,
+                            )
+                        } else {
+                            Modifier
+                        }
+                    )
+            ) {
+                SmartImage(
+                    url = track?.album?.getCover(CoverSize.SMALL)?.uri
+                        ?.let { ALBUM_COVER_URL + it },
+                    contentDescription = "Artwork",
+                    modifier = Modifier.fillMaxSize(),
+                    monochrome = LocalUiSettings.current.monochromePlayer
+                )
+            }
+
+            if (isBuffering) {
+                ContainedLoadingIndicator(
+                    modifier = Modifier
+                        .size(IMAGE_SIZE)
+                        .alpha(0.5f)
+                        .align(Alignment.Center),
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.width(12.dp))
+
+        Column(
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier.weight(1f)
+        ) {
+            Text(
+                text = track?.name ?: "-----",
+                style = MaterialTheme.typography.bodyLargeEmphasized,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+
+            Spacer(modifier = Modifier.height(2.dp))
+
+            Text(
+                text = buildString {
+                    append(track?.artists?.joinToString { it.name } ?: "----")
+                    if (track != null) {
+                        append(" · ")
+                        append(formatTime(currentTimeMs))
+                        append(" / ")
+                        append(formatTime(track.duration))
+                    }
+                },
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

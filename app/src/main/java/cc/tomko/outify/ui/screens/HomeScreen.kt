@@ -384,7 +384,7 @@ private fun EmptyResultCard() {
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "API request returned nothing",
+                text = "Couldn't load your top artists and tracks right now. Search and library still work with playback login.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

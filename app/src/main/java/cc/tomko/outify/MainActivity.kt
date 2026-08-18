@@ -360,7 +360,15 @@ class MainActivity : ComponentActivity() {
                                         ) + fadeOut(),
                                         modifier = Modifier
                                             .align(Alignment.BottomCenter)
-                                            .padding(bottom = if (interfaceSettings.experimentalFloatingNav) 78.dp else 68.dp)
+                                            .then(
+                                                if (playerSheetState.isExpanded) {
+                                                    Modifier.fillMaxSize()
+                                                } else {
+                                                    Modifier.padding(
+                                                        bottom = if (interfaceSettings.experimentalFloatingNav) 78.dp else 68.dp
+                                                    )
+                                                }
+                                            )
                                     ) {
                                         PlayerSheet(
                                             sheetState = playerSheetState,
@@ -430,7 +438,16 @@ class MainActivity : ComponentActivity() {
                                             )
                                         }
                                     } else {
-                                        Box(modifier = Modifier.align(Alignment.BottomCenter)) {
+                                        AnimatedVisibility(
+                                            visible = currentTrack == null || !playerSheetState.isExpanded,
+                                            enter = slideInVertically(
+                                                initialOffsetY = { fullHeight -> fullHeight }
+                                            ) + fadeIn(),
+                                            exit = slideOutVertically(
+                                                targetOffsetY = { fullHeight -> fullHeight }
+                                            ) + fadeOut(),
+                                            modifier = Modifier.align(Alignment.BottomCenter),
+                                        ) {
                                             OutifyBottomNav(
                                                 items = allRoutes,
                                                 selectedId = selectedId,
