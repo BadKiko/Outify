@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -660,7 +661,7 @@ private fun PlaybackControls(
             },
             modifier = Modifier
                 .weight(prevWeight)
-                .fillMaxHeight()
+                .wrapContentHeight()
         ) {
             Icon(
                 Icons.Default.SkipPrevious,
@@ -689,7 +690,7 @@ private fun PlaybackControls(
                 },
                 modifier = Modifier
                     .weight(rewindWeight)
-                    .fillMaxHeight()
+                    .wrapContentHeight()
             ) {
                 Icon(
                     Icons.Default.FastRewind,
@@ -802,7 +803,7 @@ private fun PlaybackControls(
                 },
                 modifier = Modifier
                     .weight(ffWeight)
-                    .fillMaxHeight()
+                    .wrapContentHeight()
             ) {
                 Icon(
                     Icons.Default.FastForward,
@@ -832,7 +833,7 @@ private fun PlaybackControls(
             },
             modifier = Modifier
                 .weight(nextWeight)
-                .fillMaxHeight()
+                .wrapContentHeight()
         ) {
             Icon(
                 Icons.Default.SkipNext,
