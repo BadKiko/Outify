@@ -1,0 +1,96 @@
+name: Test APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  librespot_build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - abi: arm64-v8a
+            triple: aarch64-linux-android
+          - abi: armeabi-v7a
+            triple: armv7-linux-androideabi
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            rust/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: test-apk-rust-${{ matrix.abi }}-${{ hashFiles('rust/**/Cargo.lock') }}
+          restore-keys: test-apk-rust-${{ matrix.abi }}-
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - run: cargo install cargo-ndk
+
+      - name: Install Android NDK
+        run: |
+          cd "$HOME"
+          wget -q https://dl.google.com/android/repository/android-ndk-r29-linux.zip
+          unzip -q android-ndk-r29-linux.zip
+          echo "ANDROID_NDK_HOME=$HOME/android-ndk-r29" >> "$GITHUB_ENV"
+
+      - run: rustup target add ${{ matrix.triple }}
+
+      - name: Build librespot-ffi
+        working-directory: rust/librespot-ffi
+        run: cargo ndk -t ${{ matrix.abi }} --platform 21 build --release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: librespot-${{ matrix.abi }}
+          path: rust/target/${{ matrix.triple }}/release/liblibrespot_ffi.so
+          if-no-files-found: error
+
+  apk:
+    runs-on: ubuntu-latest
+    needs: librespot_build
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: librespot-arm64-v8a
+          path: app/src/main/jniLibs/arm64-v8a
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: librespot-armeabi-v7a
+          path: app/src/main/jniLibs/armeabi-v7a
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      # Optional: built-in Spotify app credentials (repo secrets). Without them
+      # the APK works only with your own credentials from Settings (see CLIENT.md).
+      - name: Write keystore.properties
+        env:
+          SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
+          SPOTIFY_CLIENT_SECRET: ${{ secrets.SPOTIFY_CLIENT_SECRET }}
+        run: |
+          {
+            echo "spotify.playback.clientId=$SPOTIFY_CLIENT_ID"
+            echo "spotify.playback.clientSecret=$SPOTIFY_CLIENT_SECRET"
+          } > keystore.properties
+
+      # No signing secrets in env -> release falls back to the debug key.
+      - run: ./gradlew assembleRelease
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: outify-test-apk
+          path: app/build/outputs/apk/release/*.apk
