@@ -5,6 +5,8 @@ import androidx.annotation.StringRes
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cc.tomko.outify.R
+import cc.tomko.outify.core.AuthStateEvent
+import cc.tomko.outify.core.AuthStateEventBus
 import cc.tomko.outify.core.SpClient
 import cc.tomko.outify.core.UserProfile
 import cc.tomko.outify.core.model.Album
@@ -29,6 +31,7 @@ import cc.tomko.outify.ui.model.search.SearchHistoryItem
 import cc.tomko.outify.ui.model.search.SearchResultType
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.async
@@ -117,6 +120,23 @@ class SearchViewModel @Inject constructor(
 
     init {
         _isLoggedIn.value = spClient.isOAuthAuthenticated()
+
+        // Logging in after this ViewModel was created must be picked up, otherwise
+        // search keeps treating the user as logged out until the app restarts.
+        viewModelScope.launch {
+            AuthStateEventBus.events.collect { event ->
+                when (event) {
+                    is AuthStateEvent.AccountLoggedIn,
+                    is AuthStateEvent.AccountLoggedOut -> {
+                        delay(200)
+                        _isLoggedIn.value =
+                            withContext(Dispatchers.IO) { spClient.isOAuthAuthenticated() }
+                    }
+
+                    else -> Unit
+                }
+            }
+        }
 
         viewModelScope.launch {
             queryFlow

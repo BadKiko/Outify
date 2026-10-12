@@ -135,8 +135,11 @@ class PlaybackSettingViewModel @Inject constructor(
         if (_isRestarting.value) return
 
         viewModelScope.launch {
-            val id = settingsRepository.clientId.firstOrNull() ?: BuildConfig.SPOTIFY_CLIENT_ID
-            val secret = settingsRepository.clientSecret.first() ?: BuildConfig.SPOTIFY_CLIENT_SECRET
+            val customId = settingsRepository.clientId.firstOrNull()
+            val customSecret = settingsRepository.clientSecret.firstOrNull()
+            val useCustom = !customId.isNullOrBlank() && !customSecret.isNullOrBlank()
+            val id = if (useCustom) customId!! else BuildConfig.SPOTIFY_CLIENT_ID
+            val secret = if (useCustom) customSecret!! else BuildConfig.SPOTIFY_CLIENT_SECRET
 
             _isRestarting.value = true
             try {

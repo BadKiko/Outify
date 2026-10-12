@@ -148,10 +148,17 @@ impl SpotifyClient {
         }
     }
 
+    /// A stored token means the user is logged in. A network failure while
+    /// refreshing it (offline, timeout) must not look like a logout; any other
+    /// error (missing/corrupt token, refresh rejected) does.
     pub async fn is_oauth_authenticated(&self) -> bool {
         match self.load_token().await {
-            Ok(Some(_)) => true,
-            _ => false,
+            Ok(token) => token.is_some(),
+            Err(SpotifyApiError::Reqwest(e)) => {
+                warn!("token refresh failed due to network error, keeping account logged in: {e}");
+                true
+            }
+            Err(_) => false,
         }
     }
 

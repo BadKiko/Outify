@@ -74,8 +74,14 @@ class OutifyApplication : Application() {
         }
 
         appScope.launch {
-            val spotifyId = settingsRepository.clientId.firstOrNull() ?: BuildConfig.SPOTIFY_CLIENT_ID
-            val spotifySecret = settingsRepository.clientSecret.firstOrNull() ?: BuildConfig.SPOTIFY_CLIENT_ID
+            // Prefer the user's own credentials, but only as a complete pair so a
+            // custom id is never combined with the built-in secret (or vice versa).
+            val customId = settingsRepository.clientId.firstOrNull()
+            val customSecret = settingsRepository.clientSecret.firstOrNull()
+            val useCustom = !customId.isNullOrBlank() && !customSecret.isNullOrBlank()
+
+            val spotifyId = if (useCustom) customId!! else BuildConfig.SPOTIFY_CLIENT_ID
+            val spotifySecret = if (useCustom) customSecret!! else BuildConfig.SPOTIFY_CLIENT_SECRET
 
             if (spotifySecret.isEmpty() || spotifyId.isEmpty()) {
                 Toast.makeText(
